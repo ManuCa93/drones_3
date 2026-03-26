@@ -6,19 +6,19 @@ from robomaster.robot import Robot
 from skimage.color import rgb2hsv
 from skimage.measure import label, regionprops
 
-# --- Variabili Globali Sensori ---
+# --- Global Sensor Variables ---
 accumulated_yaw = 0.0
 last_yaw = None
-current_distance = 2000.0  # Inizializzato a 2 metri
-readings = []  # Per il grafico: (angolo, distanza)
+current_distance = 2000.0  # Initialized at 2 meters
+readings = []  # For plot: (angle, distance)
 
-# --- Parametri di Controllo (Antiscivolo) ---
-KP_YAW = 1.5  # Quanto forte corregge la traiettoria se va storto
+# --- Control Parameters (Anti-drift) ---
+KP_YAW = 1.5  # Aggressiveness of heading correction
 
-# --- Variabile di Memoria per l'Ostacolo Sconosciuto ---
+# --- Memory Variable for Unknown Obstacle ---
 last_turn_was_right = False 
 
-# --- CALLBACKS SENSORI (Il Giroscopio / IMU) ---
+# --- SENSOR CALLBACKS (Gyroscope / IMU) ---
 def attitude_handler(attitude_info):
     global accumulated_yaw, last_yaw
     yaw = attitude_info[0]
@@ -29,11 +29,11 @@ def attitude_handler(attitude_info):
         
     delta = yaw - last_yaw
     
-    # Gestione del passaggio tra 180 e -180
+    # Handle wrap-around between 180 and -180
     if delta > 180: delta -= 360
     elif delta < -180: delta += 360
     
-    # accumulated_yaw tiene in memoria l'angolo assoluto rispetto alla partenza
+    # accumulated_yaw stores absolute heading from start
     accumulated_yaw += delta
     last_yaw = yaw
 
@@ -68,22 +68,22 @@ def guess_unknown_color(img_rgb: np.ndarray) -> str:
     avg_color = np.mean(center_roi, axis=(0, 1))
     R, G, B = avg_color
     
-    if R > G and R > B: return "Rosso/Marrone"
-    if G > R and G > B: return "Verde"
-    if B > R and B > G: return "Azzurro/Viola"
-    if R > 200 and G > 200 and B > 200: return "Bianco"
-    return "Sconosciuto"
+    if R > G and R > B: return "Red/Brown"
+    if G > R and G > B: return "Green"
+    if B > R and B > G: return "Blue/Purple"
+    if R > 200 and G > 200 and B > 200: return "White"
+    return "Unknown"
 
-# --- MANOVRE E OVERLAY ---
+# --- MANEUVERS AND OVERLAY ---
 def draw_overlay(frame, color_seen, state_msg, z_correction=0.0):
     display = frame.copy()
-    cv2.putText(display, f"Stato: {state_msg}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    cv2.putText(display, f"Colore Visto: {color_seen}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-    cv2.putText(display, f"Distanza ToF: {current_distance:.0f} mm", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    cv2.putText(display, f"State: {state_msg}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    cv2.putText(display, f"Color Seen: {color_seen}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+    cv2.putText(display, f"ToF Distance: {current_distance:.0f} mm", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     
-    # Mostriamo a schermo l'errore del giroscopio e la correzione applicata
+    # Show gyro error and applied correction on screen
     cv2.putText(display, f"Gyro Err: {accumulated_yaw:+.1f} deg", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 100, 100), 2)
-    cv2.putText(display, f"Z Correzione: {z_correction:+.1f}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 100, 100), 2)
+    cv2.putText(display, f"Z Correction: {z_correction:+.1f}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 100, 100), 2)
     return display
 
 def maneuver_and_pump_camera(robot, x_speed, y_speed, duration):
@@ -91,17 +91,17 @@ def maneuver_and_pump_camera(robot, x_speed, y_speed, duration):
     start_time = time.time()
     
     while time.time() - start_time < duration:
-        # Calcolo correzione Z in tempo reale (se va a sinistra, lo spinge a destra)
+        # Compute Z correction in real time (if drifting left, push right)
         z_speed = -KP_YAW * accumulated_yaw
-        z_speed = float(np.clip(z_speed, -30.0, 30.0)) # Limite per non farlo girare troppo forte
+        z_speed = float(np.clip(z_speed, -30.0, 30.0)) # Limit to avoid aggressive turning
         
         robot.chassis.drive_speed(x=x_speed, y=y_speed, z=z_speed)
         
         frame = robot.camera.read_video_frame(strategy="newest")
         if frame is not None:
             display = frame.copy()
-            cv2.putText(display, "SCHIVATA IN CORSO...", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-            # Mostra la correzione anche durante la schivata
+            cv2.putText(display, "DODGE IN PROGRESS...", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+            # Show correction during dodge
             cv2.putText(display, f"Z Corr: {z_speed:.1f}", (50, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
             cv2.imshow("RoboMaster - Live", display)
             cv2.waitKey(1)
@@ -110,28 +110,28 @@ def maneuver_and_pump_camera(robot, x_speed, y_speed, duration):
     robot.chassis.drive_speed(x=0, y=0, z=0)
 
 def dodge_obstacle(robot, direction_y):
-    # Schiva di lato (x=0, y=direzione)
+    # Dodge sideways (x=0, y=direction)
     maneuver_and_pump_camera(robot, x_speed=0.0, y_speed=direction_y, duration=1.5)
-    # Va avanti (x=0.3, y=0)
+    # Move forward (x=0.3, y=0)
     maneuver_and_pump_camera(robot, x_speed=0.3, y_speed=0.0, duration=2.0)
-    # Torna al centro (x=0, y=-direzione)
+    # Return to center (x=0, y=-direction)
     maneuver_and_pump_camera(robot, x_speed=0.0, y_speed=-direction_y, duration=1.5)
 
 # ==========================================
-# --- ESECUZIONE PRINCIPALE ---
+# --- MAIN EXECUTION ---
 # ==========================================
 robot = Robot()
 robot.initialize(conn_type="sta", sn="LOCAL")
 
 try:
-    print("Inizializzazione Sensori e Camera...")
-    # Sub freq a 50Hz per il giroscopio (più veloce legge, più rapida è la correzione)
+    print("Initializing Sensors and Camera...")
+    # Subscribe attitude at 50Hz (faster readings = faster correction)
     robot.chassis.sub_attitude(freq=50, callback=attitude_handler)
     robot.sensor.sub_distance(freq=10, callback=distance_handler)
     robot.camera.start_video_stream(display=False, resolution="720p")
     time.sleep(1.5)
     
-    print("\nRobot pronto! Premi Q nella finestra video per fermare e generare il grafico.\n")
+    print("\nRobot ready! Press Q in the video window to stop and generate the plot.\n")
 
     while True:
         frame = robot.camera.read_video_frame(strategy="newest")
@@ -143,57 +143,57 @@ try:
         color_seen = detect_color(rgb_frame)
         z_correction = 0.0 # Valore di default per l'overlay
         
-        # --- LOGICA DI NAVIGAZIONE E SCHIVATA ---
+        # --- NAVIGATION AND DODGE LOGIC ---
         
-        # 1. CASO BLU (Avvicinati fino a 6cm / 60mm e FERMATI)
+        # 1. BLUE CASE (Approach to 6cm / 60mm and STOP)
         if color_seen == "blue":
             if current_distance > 60:
-                state_msg = "Vedo BLU: Mi avvicino..."
+                state_msg = "BLUE seen: approaching..."
                 z_correction = -KP_YAW * accumulated_yaw
                 z_correction = float(np.clip(z_correction, -15.0, 15.0))
                 robot.chassis.drive_speed(x=0.2, y=0.0, z=z_correction)
             else:
-                state_msg = "Obiettivo BLU raggiunto (6cm)!"
+                state_msg = "BLUE target reached (6cm)!"
                 robot.chassis.drive_speed(x=0.0, y=0.0, z=0.0)
                 
-        # 2. SCHIVATA: Il sensore rileva ostacolo a 10 cm (100 mm) O MENO
+        # 2. DODGE: Sensor detects obstacle at 10 cm (100 mm) or closer
         elif current_distance <= 100:
             if color_seen == "black":
-                state_msg = "Ostacolo NERO a 10cm: Schivo a DESTRA"
-                print(f"\n[{current_distance}mm] Rilevato NERO. Schivo a Destra.")
+                state_msg = "BLACK obstacle at 10cm: Dodge RIGHT"
+                print(f"\n[{current_distance}mm] Detected BLACK. Dodging right.")
                 dodge_obstacle(robot, direction_y=0.3)
                 last_turn_was_right = True
                 
             elif color_seen == "orange":
-                state_msg = "Ostacolo ARANCIONE a 10cm: Schivo a SINISTRA"
-                print(f"\n[{current_distance}mm] Rilevato ARANCIONE. Schivo a Sinistra.")
+                state_msg = "ORANGE obstacle at 10cm: Dodge LEFT"
+                print(f"\n[{current_distance}mm] Detected ORANGE. Dodging left.")
                 dodge_obstacle(robot, direction_y=-0.3)
                 last_turn_was_right = False
                 
             else:
-                # Vede un palo ma non riconosce il colore
+                # Sees an obstacle pole but unknown color
                 guessed_color = guess_unknown_color(rgb_frame)
-                state_msg = f"Ostacolo ({guessed_color}) a 10cm!"
+                state_msg = f"Obstacle ({guessed_color}) at 10cm!"
                 
                 if last_turn_was_right:
-                    print(f"\n[{current_distance}mm] Ostacolo {guessed_color}. Ultima svolta: Destra -> Ora schivo a SINISTRA.")
+                    print(f"\n[{current_distance}mm] Obstacle {guessed_color}. Last turn: Right -> Now dodge LEFT.")
                     dodge_obstacle(robot, direction_y=-0.3)
                     last_turn_was_right = False
                 else:
-                    print(f"\n[{current_distance}mm] Ostacolo {guessed_color}. Ultima svolta: Sinistra -> Ora schivo a DESTRA.")
+                    print(f"\n[{current_distance}mm] Obstacle {guessed_color}. Last turn: Left -> Now dodge RIGHT.")
                     dodge_obstacle(robot, direction_y=0.3)
                     last_turn_was_right = True
 
-        # 3. NESSUN OSTACOLO VICINO (> 100 mm)
+        # 3. NO CLOSE OBSTACLE (> 100 mm)
         else:
             if color_seen in ["black", "orange"]:
-                state_msg = f"Vedo {color_seen.upper()} in lontananza..."
+                state_msg = f"Seeing {color_seen.upper()} ahead..."
             else:
-                state_msg = "Avanzamento Dritto Stabilizzato"
+                state_msg = "Steady straight progress"
             
-            # --- Auto-raddrizzamento continuo sulla via principale ---
+            # --- Continuous auto-correction on main path ---
             z_correction = -KP_YAW * accumulated_yaw
-            z_correction = float(np.clip(z_correction, -15.0, 15.0)) # Più dolce quando va dritto
+            z_correction = float(np.clip(z_correction, -15.0, 15.0)) # gentler when straight
             
             robot.chassis.drive_speed(x=0.3, y=0.0, z=z_correction)
 
@@ -201,17 +201,17 @@ try:
         display_frame = draw_overlay(frame, str(color_seen), state_msg, z_correction)
         cv2.imshow("RoboMaster - Live", display_frame)
 
-        # Esci premendo Q
+        # Exit on Q
         if cv2.waitKey(1) & 0xFF == ord('q'):
-            print("\nChiusura richiesta dall'utente.")
+            print("\nShutdown requested by user.")
             break
 
         time.sleep(0.05)
 
 except KeyboardInterrupt:
-    print("\nInterruzione manuale (Ctrl+C).")
+    print("\nManual interruption (Ctrl+C).")
 finally:
-    print("\nSpegnimento motori e sensori...")
+    print("\nShutting down motors and sensors...")
     robot.chassis.drive_speed(x=0, y=0, z=0)
     robot.sensor.unsub_distance()
     robot.chassis.unsub_attitude()
@@ -224,22 +224,22 @@ finally:
         pass
 
 # ==========================================
-# --- GENERAZIONE GRAFICO FINALE ---
+# --- FINAL PLOT GENERATION ---
 # ==========================================
-print("\nGenerazione del grafico del sensore in corso...")
+print("\nGenerating sensor plot...")
 if readings:
     angles = [r[0] for r in readings]
     distances = [r[1] for r in readings]
     distances_clean = [d if d != 2000.0 else np.nan for d in distances]
     
     plt.figure(figsize=(10, 5))
-    plt.plot(range(len(distances_clean)), distances_clean, '-o', markersize=4, color="b", label="Distanza ostacoli")
-    plt.title("Profilo di distanza rilevato durante il percorso")
-    plt.xlabel("Tempo (letture del sensore)")
-    plt.ylabel("Distanza (mm)")
+    plt.plot(range(len(distances_clean)), distances_clean, '-o', markersize=4, color="b", label="Obstacle distance")
+    plt.title("Distance profile recorded during the run")
+    plt.xlabel("Time (sensor readings)")
+    plt.ylabel("Distance (mm)")
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
     plt.show()
 else:
-    print("Nessun dato acquisito dal sensore per il grafico.")
+    print("No sensor data acquired for the plot.")
