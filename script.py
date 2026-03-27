@@ -352,6 +352,7 @@ try:
     time.sleep(1.5)
     reset_yaw_reference()
     print("\nRobot is ready. Press Q to stop.\n")
+    
 
     while True:
         frame = robot.camera.read_video_frame(strategy="newest")
@@ -366,7 +367,7 @@ try:
             dist = current_distance
 
         # 1. BLUE TARGET 
-        if color_seen == "blue":
+        if color_seen == "Blue":
             if dist > BLUE_STOP_MM:
                 state_msg = "BLUE: Approaching..."
                 speed_x   = 0.20 if dist > 150 else 0.05
