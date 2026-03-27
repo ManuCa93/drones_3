@@ -27,14 +27,14 @@ RETURN_FACTOR      = 1.08
 MIN_PIXELS         = 10000
 
 COLOR_RANGES = {
-    "blue":   ((  99, 102,  51), (126, 255, 255)),
-    "black":  ((   0,   0,   0), (179, 255,  50)),
-    "orange": ((   3, 127,  51), ( 27, 255, 255)),
-    "red":    ((   0, 120,  70), ( 10, 255, 255)),  
-    "red2":   (( 170, 120,  70), (180, 255, 255)),  
-    "green":  ((  36,  80,  40), ( 86, 255, 255)),
-    "white":  ((   0,   0, 200), (179,  30, 255)),
-    "yellow": ((  20, 100,  80), ( 35, 255, 255)),
+    "Blue":   ((  99, 102,  51), (126, 255, 255)),
+    "Black":  ((   0,   0,   0), (0, 0,  0)),
+    "Orange": ((   3, 127,  51), ( 27, 255, 255)),
+    "Red":    ((   0, 120,  70), ( 10, 255, 255)),  
+    "Red2":   (( 170, 120,  70), (180, 255, 255)),  
+    "Green":  ((  36,  80,  40), ( 86, 255, 255)),
+    "White":  ((   0,   0, 200), (179,  30, 255)),
+    "Yellow": ((  20, 100,  80), ( 35, 255, 255)),
 }
 
 
@@ -158,7 +158,7 @@ def drive_corrected(robot, x: float, y: float, duration: float, label: str = "")
 
 
 # PROCEDURA DODGE 
-def dodge_obstacle(robot, direction_y: float, obstacle_color: str):
+def dodge_obstacle(robot, obstacle_color: str):
     """
     P1 --> Move sideways (min. 8 cm) until the ToF sensor is clear
     P2 --> Turn 90° facing the obstacle
@@ -168,10 +168,14 @@ def dodge_obstacle(robot, direction_y: float, obstacle_color: str):
     P5 --> Turn back to the original heading
     P6 --> Return to the central path
     """
-    print(obstacle_color)
     global target_yaw
+
     #side = "RIGHT" if direction_y > 0 else "LEFT"
-    side = "RIGHT" if obstacle_color in ("Red") else "LEFT"
+    side = "RIGHT" if obstacle_color in ("Red", "Orange", "Yellow", "Black") else "LEFT"
+    direction_y = +DODGE_Y_SPEED if side == "RIGHT" else -DODGE_Y_SPEED
+
+    state_msg = f"OBSTACLE {obstacle_color} --> {side}"
+
     print(f"\n[DODGE] ── Start maneuver towards {side} | Obstacle: {obstacle_color}")
 
     robot.chassis.drive_speed(x=0, y=0, z=0)
@@ -376,22 +380,22 @@ try:
         elif dist <= OBSTACLE_DIST_MM:
             robot.chassis.drive_speed(x=0, y=0, z=0)
 
-            direction_y = -DODGE_Y_SPEED if last_turn_was_right else +DODGE_Y_SPEED
-            side        = "RIGHT" if direction_y > 0 else "LEFT"
+            #direction_y = -DODGE_Y_SPEED if last_turn_was_right else +DODGE_Y_SPEED
+            #side        = "RIGHT" if direction_y > 0 else "LEFT"
 
-            KNOWN_OBSTACLES = ("black", "orange", "green", "white", "yellow")
+            KNOWN_OBSTACLES = ("Black", "Orange", "Green", "White", "Yellow")
             if color_seen in KNOWN_OBSTACLES:
                 label = color_seen.upper()
             else:
                 label = guess_unknown_color(rgb_frame)
                 color_seen = label
                 
-            state_msg = f"OBSTACLE {label} --> {side}"
+            #state_msg = f"OBSTACLE {label} --> {side}"
             print(f"[MAIN] {state_msg}")
 
-            dodge_obstacle(robot, direction_y=direction_y,
+            dodge_obstacle(robot,
                            obstacle_color=color_seen or "Unknown")
-            last_turn_was_right = (direction_y > 0)
+            #last_turn_was_right = (direction_y > 0)
             reset_yaw_reference()
 
         # 3. PROGRESS 
