@@ -136,9 +136,9 @@ ROI_Y2     = ROI_Y + ROI_SIZE
 def guess_unknown_color(img_rgb: np.ndarray) -> str:
     roi      = img_rgb[ROI_Y:ROI_Y2, ROI_X:ROI_X2]     
     R, G, B  = np.mean(roi, axis=(0, 1))
-    if R > G and R > B:                  return "Red/Brown"
+    if R > G and R > B:                  return "Red"
     if G > R and G > B:                  return "Green"
-    if B > R and B > G:                  return "Blue/Purple"
+    if B > R and B > G:                  return "Blue"
     if R > 200 and G > 200 and B > 200:  return "White"
     return "Unknown"
 
@@ -168,8 +168,10 @@ def dodge_obstacle(robot, direction_y: float, obstacle_color: str):
     P5 --> Turn back to the original heading
     P6 --> Return to the central path
     """
+    print(obstacle_color)
     global target_yaw
-    side = "RIGHT" if direction_y > 0 else "LEFT"
+    #side = "RIGHT" if direction_y > 0 else "LEFT"
+    side = "RIGHT" if obstacle_color in ("Red") else "LEFT"
     print(f"\n[DODGE] ── Start maneuver towards {side} | Obstacle: {obstacle_color}")
 
     robot.chassis.drive_speed(x=0, y=0, z=0)
