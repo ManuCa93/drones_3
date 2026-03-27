@@ -11,8 +11,8 @@ from robomaster.robot import Robot
 KP_YAW             = 2.0
 MAX_Z              = 90.0
 
-OBSTACLE_DIST_MM   = 80
-BLUE_STOP_MM       = 20
+OBSTACLE_DIST_MM   = 300
+BLUE_STOP_MM       = 60
 CLEAR_THRESHOLD_MM = 1000
 
 DODGE_Y_SPEED      = 0.40
@@ -21,10 +21,21 @@ MAX_FWD_TIME       = 10.0
 
 MIN_STRAFE_CM      = 8.0
 MIN_ALONGSIDE_CM   = 10.0
-EXTRA_PASS_CM      = 35.0
+EXTRA_PASS_CM      = 45.0
 RETURN_FACTOR      = 1.08
 
 MIN_PIXELS         = 10000
+
+COLOR_RANGES = {
+    "blue":   ((  99, 102,  51), (126, 255, 255)),
+    "black":  ((   0,   0,   0), (179, 255,  50)),
+    "orange": ((   3, 127,  51), ( 27, 255, 255)),
+    "red":    ((   0, 120,  70), ( 10, 255, 255)),  
+    "red2":   (( 170, 120,  70), (180, 255, 255)),  
+    "green":  ((  36,  80,  40), ( 86, 255, 255)),
+    "white":  ((   0,   0, 200), (179,  30, 255)),
+    "yellow": ((  20, 100,  80), ( 35, 255, 255)),
+}
 
 
 # GLOBAL THREAD-SAFE STATE 
@@ -76,29 +87,61 @@ def reset_yaw_reference():
 
 
 # LIVE VISION
+# def detect_color(img_rgb: np.ndarray):
+#     roi = img_rgb[ROI_Y:ROI_Y2, ROI_X:ROI_X2]          
+#     hsv = cv2.cvtColor(roi, cv2.COLOR_RGB2HSV)
+#     mask_blue   = cv2.inRange(hsv, ( 99, 102,  51), (126, 255, 255))
+#     mask_black  = cv2.inRange(hsv, (  0,   0,   0), (179, 255,  50))
+#     mask_orange = cv2.inRange(hsv, (  3, 127,  51), ( 27, 255, 255))
+#     counts = {
+#         "blue":   cv2.countNonZero(mask_blue),
+#         "black":  cv2.countNonZero(mask_black),
+#         "orange": cv2.countNonZero(mask_orange),
+#     }
+#     dominant = max(counts, key=counts.get)
+#     return dominant if counts[dominant] > MIN_PIXELS else None
+
 def detect_color(img_rgb: np.ndarray):
-    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
-    mask_blue   = cv2.inRange(hsv, ( 99, 102,  51), (126, 255, 255))
-    mask_black  = cv2.inRange(hsv, (  0,   0,   0), (179, 255,  50))
-    mask_orange = cv2.inRange(hsv, (  3, 127,  51), ( 27, 255, 255))
-    counts = {
-        "blue":   cv2.countNonZero(mask_blue),
-        "black":  cv2.countNonZero(mask_black),
-        "orange": cv2.countNonZero(mask_orange),
-    }
-    dominant = max(counts, key=counts.get)
-    return dominant if counts[dominant] > MIN_PIXELS else None
+    roi = img_rgb[ROI_Y:ROI_Y2, ROI_X:ROI_X2]
+    hsv = cv2.cvtColor(roi, cv2.COLOR_RGB2HSV)
+
+    counts = {}
+    for name, (lower, upper) in COLOR_RANGES.items():
+        mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
+        counts[name] = cv2.countNonZero(mask)
+
+    # Merge 'red' and 'red2' into a single 'red'
+    counts["red"] = counts.pop("red", 0) + counts.pop("red2", 0)
+
+    # All colours detected above the threshold
+    detected = {k: v for k, v in counts.items() if v > MIN_PIXELS}
+
+    if not detected:
+        return None, {}
+
+    dominant = max(detected, key=detected.get)
+    return dominant, detected
+
+
+
+# ROI (Region of Interest) for colour detection
+ROI_SIZE   = 250
+ROI_OFFSET_Y = 80   
+ROI_X      = (1280 - ROI_SIZE) // 2  
+ROI_Y      = ( 720 - ROI_SIZE) // 2 - ROI_OFFSET_Y
+ROI_X2     = ROI_X + ROI_SIZE          
+ROI_Y2     = ROI_Y + ROI_SIZE          
 
 
 def guess_unknown_color(img_rgb: np.ndarray) -> str:
-    h, w = img_rgb.shape[:2]
-    roi  = img_rgb[h // 4 : 3 * h // 4, w // 4 : 3 * w // 4]
-    R, G, B = np.mean(roi, axis=(0, 1))
+    roi      = img_rgb[ROI_Y:ROI_Y2, ROI_X:ROI_X2]     
+    R, G, B  = np.mean(roi, axis=(0, 1))
     if R > G and R > B:                  return "Red/Brown"
     if G > R and G > B:                  return "Green"
     if B > R and B > G:                  return "Blue/Purple"
     if R > 200 and G > 200 and B > 200:  return "White"
     return "Unknown"
+
 
 
 # CORRECT LINEAR MOTION 
@@ -108,28 +151,30 @@ def drive_corrected(robot, x: float, y: float, duration: float, label: str = "")
         robot.chassis.drive_speed(x=x, y=y, z=get_z_correction())
         frame = robot.camera.read_video_frame(strategy="newest")
         if frame is not None:
-            cv2.imshow("RoboMaster - Live", draw_overlay(frame, "", label))
+            cv2.imshow("RoboMaster - Live", draw_overlay(frame, "", label, {}))
             cv2.waitKey(1)
         time.sleep(0.02)
     robot.chassis.drive_speed(x=0, y=0, z=0)
 
 
-# PROCEDURE DODGE 
+# PROCEDURA DODGE 
 def dodge_obstacle(robot, direction_y: float, obstacle_color: str):
     """
-    P1 → Move sideways (min. 8 cm) until the ToF sensor is clear
-    P2 → Turn 90° facing the obstacle
-    P3 → Move forward sideways: ignore the ToF sensor for 10 cm, then wait
+    P1 --> Move sideways (min. 8 cm) until the ToF sensor is clear
+    P2 --> Turn 90° facing the obstacle
+    P3 --> Move forward sideways: ignore the ToF sensor for 10 cm, then wait
           until the obstacle appears and then disappears from the sensor
-    P4 → EXTRA_PASS_CM extra distance beyond the edge
-    P5 → Turn back to the original heading
-    P6 → Return to the central path
+    P4 --> EXTRA_PASS_CM extra distance beyond the edge
+    P5 --> Turn back to the original heading
+    P6 --> Return to the central path
     """
     global target_yaw
     side = "RIGHT" if direction_y > 0 else "LEFT"
     print(f"\n[DODGE] ── Start maneuver towards {side} | Obstacle: {obstacle_color}")
 
     robot.chassis.drive_speed(x=0, y=0, z=0)
+    # FIX #1: sleep BEFORE start_dodge → lateral_duration measures
+    # only the time when the robot is actually moving
     time.sleep(0.2)
 
     min_strafe_secs    = (MIN_STRAFE_CM    / 100.0) / DODGE_Y_SPEED
@@ -158,21 +203,23 @@ def dodge_obstacle(robot, direction_y: float, obstacle_color: str):
         if frame is not None:
             cv2.imshow("RoboMaster - Live",
                        draw_overlay(frame, obstacle_color,
-                                    f"P1 SCARTO→{side} | {elapsed:.1f}s"))
+                                    f"P1 SCARTO-->{side} | {elapsed:.1f}s"))
             cv2.waitKey(1)
         time.sleep(0.02)
 
     robot.chassis.drive_speed(x=0, y=0, z=0)
 
+    # Additional margin to fit the total width of the frame
+    # (included in `lateral_duration` --> will be correctly taken into account in P6)
     drive_corrected(robot, x=0.0, y=direction_y, duration=0.5,
-                    label="P1 MARGINE CHASSIS")
+                    label="P1 CHASSIS MARGIN")
     lateral_duration = time.time() - start_dodge
     print(f"[P1] Total lateral deflection: {lateral_duration:.2f}s "
-          f"≈ {lateral_duration * DODGE_Y_SPEED * 100:.1f} cm")
+          f"about {lateral_duration * DODGE_Y_SPEED * 100:.1f} cm")
 
     # STEP 2: Rotate 90° towards the obstacle 
-    # direction_y > 0 (RIGHT) - obstacle now on the left - yaw_shift = -90
-    # direction_y < 0 (LEFT) - obstacle now on the right - yaw_shift = +90
+    # direction_y > 0 (RIGHT) --> obstacle now on the left --> yaw_shift = -90
+    # direction_y < 0 (LEFT) --> obstacle now on the right --> yaw_shift = +90
     yaw_shift = -90.0 if direction_y > 0 else +90.0
     print(f"[P2] Rotation {yaw_shift:+.0f}° towards the obstacle...")
     with _lock:
@@ -181,8 +228,8 @@ def dodge_obstacle(robot, direction_y: float, obstacle_color: str):
                     label=f"P2 ROTATION {yaw_shift:+.0f}°")
 
     # STEP 3: Sideways movement 
-    # After -90° rotation: +y robot = original goal direction → fwd_y = +FORWARD
-    # After +90° rotation: -y robot = original goal direction → fwd_y = -FORWARD
+    # After -90° rotation: +y robot = original goal direction --> fwd_y = +FORWARD
+    # After +90° rotation: -y robot = original goal direction --> fwd_y = -FORWARD
     fwd_y = +FORWARD_SPEED if direction_y > 0 else -FORWARD_SPEED
     print(f"[P3] Coaching (ignore ToF {MIN_ALONGSIDE_CM:.0f} cm, then wait for it to disappear)...")
     start_fwd        = time.time()
@@ -215,7 +262,7 @@ def dodge_obstacle(robot, direction_y: float, obstacle_color: str):
     robot.chassis.drive_speed(x=0, y=0, z=0)
 
     # STEP 4: EXTRA_PASS_CM – extra beyond the edge 
-    print(f"[P4] {EXTRA_PASS_CM:.0f} cm extra oltre il bordo...")
+    print(f"[P4] {EXTRA_PASS_CM:.0f} cm extra beyond the edge...")
     drive_corrected(robot, x=0.0, y=fwd_y, duration=extra_pass_secs,
                     label=f"P4 +{EXTRA_PASS_CM:.0f}cm")
 
@@ -226,14 +273,17 @@ def dodge_obstacle(robot, direction_y: float, obstacle_color: str):
     drive_corrected(robot, x=0.0, y=0.0, duration=1.8,
                     label="P5 REALIGNMENT")
 
+    # FIX #2: waiting for stabilisation after P5 rotation\
+    # Without this, P6 starts whilst the robot is still in micro-rotation\
+    # and the lateral return trajectory is crooked
     time.sleep(0.3)
 
     # STEP 6: Return to the central path 
     # Move exactly lateral_duration * RETURN_FACTOR in the direction 
-    # opposite to the deviation → return to the starting line
+    # opposite to the deviation --> return to the starting line
     return_duration = lateral_duration * RETURN_FACTOR
     print(f"[P6] Back to the route ({return_duration:.2f}s "
-          f"≈ {return_duration * DODGE_Y_SPEED * 100:.1f} cm)...")
+          f"about {return_duration * DODGE_Y_SPEED * 100:.1f} cm)...")
     drive_corrected(robot, x=0.0, y=-direction_y, duration=return_duration,
                     label="P6 RETURN JOURNEY")
 
@@ -242,27 +292,40 @@ def dodge_obstacle(robot, direction_y: float, obstacle_color: str):
 
 
 # OVERLAY VIDEO 
-def draw_overlay(frame, color_seen, state_msg):
+def draw_overlay(frame, color_seen, state_msg, detected_colors: dict = None):
     display = frame.copy()
     with _lock:
         dist  = current_distance
         yaw   = accumulated_yaw
         t_yaw = target_yaw
 
+    cv2.rectangle(display, (ROI_X, ROI_Y), (ROI_X2, ROI_Y2), (0, 255, 255), 2)
+    cv2.putText(display, "ROI", (ROI_X + 5, ROI_Y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
+
     lines = [
-        (f"State : {state_msg}",                           (0, 255, 0)),
-        (f"Color : {color_seen}",                          (255, 255, 0)),
-        (f"Dist  : {dist:.0f} mm",                         (0, 255, 255)),
-        (f"Yaw   : {yaw:+.1f}° → Target: {t_yaw:+.0f}°", (255, 100, 100)),
+        (f"State  : {state_msg}",                            (0, 255, 0)),
+        (f"Dominant: {color_seen}",                          (255, 255, 0)),
+        (f"Dist   : {dist:.0f} mm",                          (0, 255, 255)),
+        (f"Yaw    : {yaw:+.1f}° --> Target: {t_yaw:+.0f}°", (255, 100, 100)),
     ]
     for i, (text, color) in enumerate(lines):
         cv2.putText(display, text, (10, 30 + i * 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
 
+    # Show all detected colours along with their pixel counts
+    if detected_colors:
+        all_colors_str = "  ".join(
+            f"{k}:{v//1000}k" for k, v in sorted(detected_colors.items(),
+                                                   key=lambda x: -x[1])
+        )
+        cv2.putText(display, all_colors_str, (10, 160),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
     bar_len   = int(np.clip(dist / max(OBSTACLE_DIST_MM, 1) * 200, 0, 200))
     bar_color = (0, 255, 0) if dist > OBSTACLE_DIST_MM else (0, 0, 255)
-    cv2.rectangle(display, (10, 155), (10 + bar_len, 175), bar_color, -1)
-    cv2.rectangle(display, (10, 155), (210, 175), (200, 200, 200), 1)
+    cv2.rectangle(display, (10, 185), (10 + bar_len, 205), bar_color, -1)
+    cv2.rectangle(display, (10, 185), (210, 205), (200, 200, 200), 1)
     return display
 
 
@@ -291,7 +354,7 @@ try:
             continue
 
         rgb_frame  = frame[:, :, ::-1]
-        color_seen = detect_color(rgb_frame)
+        color_seen, detected_colors = detect_color(rgb_frame)
 
         with _lock:
             dist = current_distance
@@ -314,13 +377,14 @@ try:
             direction_y = -DODGE_Y_SPEED if last_turn_was_right else +DODGE_Y_SPEED
             side        = "RIGHT" if direction_y > 0 else "LEFT"
 
-            if color_seen in ("black", "orange"):
+            KNOWN_OBSTACLES = ("black", "orange", "green", "white", "yellow")
+            if color_seen in KNOWN_OBSTACLES:
                 label = color_seen.upper()
             else:
-                label      = guess_unknown_color(rgb_frame)
+                label = guess_unknown_color(rgb_frame)
                 color_seen = label
-
-            state_msg = f"OBSTACLE {label} → {side}"
+                
+            state_msg = f"OBSTACLE {label} --> {side}"
             print(f"[MAIN] {state_msg}")
 
             dodge_obstacle(robot, direction_y=direction_y,
@@ -335,7 +399,7 @@ try:
                                       z=get_z_correction())
 
         cv2.imshow("RoboMaster - Live",
-                   draw_overlay(frame, str(color_seen), state_msg))
+                draw_overlay(frame, str(color_seen), state_msg, detected_colors))
         if cv2.waitKey(1) & 0xFF == ord('q'):
             print("\nStop required.")
             break
@@ -357,7 +421,7 @@ finally:
         pass
 
 
-# PLOT FINALE 
+# Final Plot
 print("\nGeneration plot...")
 if readings:
     dists_c = [d if d < 1999 else np.nan for _, d in readings]
